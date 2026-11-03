@@ -10,8 +10,11 @@ using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using PdfSharp.Drawing;
-using PdfSharp.Pdf;
-using Windows.Data.Pdf;
+using SharpDocument = PdfSharp.Pdf.PdfDocument;
+using SharpPage = PdfSharp.Pdf.PdfPage;
+using WinPdfDocument = Windows.Data.Pdf.PdfDocument;
+using WinPdfPage = Windows.Data.Pdf.PdfPage;
+using WinPdfPageRenderOptions = Windows.Data.Pdf.PdfPageRenderOptions;
 using Windows.Storage;
 using Windows.Storage.Streams;
 
@@ -191,8 +194,8 @@ internal static class ImageOps
         {
             Save(flat, new JpegBitmapEncoder { QualityLevel = 92 }, tmp);
 
-            using var doc = new PdfDocument();
-            PdfPage page = doc.AddPage();
+            using var doc = new SharpDocument();
+            SharpPage page = doc.AddPage();
             using XImage img = XImage.FromFile(tmp);
 
             double w = img.PointWidth, h = img.PointHeight;
@@ -367,13 +370,13 @@ internal static class PdfOps
         Directory.CreateDirectory(dir);
 
         StorageFile file = await StorageFile.GetFileFromPathAsync(Path.GetFullPath(src));
-        PdfDocument doc = await PdfDocument.LoadFromFileAsync(file);
+        WinPdfDocument doc = await WinPdfDocument.LoadFromFileAsync(file);
 
         for (uint i = 0; i < doc.PageCount; i++)
         {
-            using PdfPage page = doc.GetPage(i);
+            using WinPdfPage page = doc.GetPage(i);
             using var ras = new InMemoryRandomAccessStream();
-            var opts = new PdfPageRenderOptions { DestinationWidth = (uint)Math.Max(1, page.Size.Width * 2) };
+            var opts = new WinPdfPageRenderOptions { DestinationWidth = (uint)Math.Max(1, page.Size.Width * 2) };
             await page.RenderToStreamAsync(ras, opts);
             ras.Seek(0);
             using Stream s = ras.AsStreamForRead();
