@@ -558,7 +558,7 @@ internal static class ZipOps
 
         foreach (string sub in Directory.EnumerateDirectories(dir))
         {
-            if ((File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0) continue;
+            if ((File.GetAttributes(sub) & System.IO.FileAttributes.ReparsePoint) != 0) continue;
             AddDirectory(zip, sub, entryPrefix + "/" + Path.GetFileName(sub));
         }
     }
