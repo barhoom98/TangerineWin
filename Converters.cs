@@ -543,15 +543,23 @@ internal static class ZipOps
                 }
                 else if (Directory.Exists(item))
                 {
-                    string root = Path.GetFileName(item);
-                    foreach (string f in Directory.EnumerateFiles(item, "*", SearchOption.AllDirectories))
-                    {
-                        string rel = Path.GetRelativePath(item, f).Replace('\\', '/');
-                        zip.CreateEntryFromFile(f, root + "/" + rel, CompressionLevel.SmallestSize);
-                    }
+                    AddDirectory(zip, item, Path.GetFileName(item));
                 }
             }
         }
         return zipPath;
+    }
+
+    /// <summary>Adds a folder recursively. Junctions / symlinks to folders are skipped so a link can never lead off the allowed drive.</summary>
+    private static void AddDirectory(ZipArchive zip, string dir, string entryPrefix)
+    {
+        foreach (string f in Directory.EnumerateFiles(dir))
+            zip.CreateEntryFromFile(f, entryPrefix + "/" + Path.GetFileName(f), CompressionLevel.SmallestSize);
+
+        foreach (string sub in Directory.EnumerateDirectories(dir))
+        {
+            if ((File.GetAttributes(sub) & FileAttributes.ReparsePoint) != 0) continue;
+            AddDirectory(zip, sub, entryPrefix + "/" + Path.GetFileName(sub));
+        }
     }
 }

@@ -130,6 +130,14 @@ internal sealed class Controller : IDisposable
 
     private async void OnActionChosen(ActionDef action, string[] files)
     {
+        // defense in depth: never touch anything outside the allowed drives (e.g. the Z: server drive)
+        files = PathGuard.FilterAll(files, out int blocked);
+        if (blocked > 0 || files.Length == 0)
+        {
+            Notify("🍊 " + action.Label, "ممنوع: البرنامج بيشتغل بس على ملفات القرص C:", null);
+            return;
+        }
+
         // let the drag-and-drop finish before we open any window or start heavy work
         await Task.Delay(80);
         if (!action.Interactive) Notify("🍊 " + action.Label, "جاري المعالجة…", null);

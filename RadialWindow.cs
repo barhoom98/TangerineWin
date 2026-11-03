@@ -53,6 +53,7 @@ public sealed class RadialWindow : Window
     private string[] _files = Array.Empty<string>();
     private string? _signature;
     private ActionDef? _hover;
+    private int _blocked;   // paths of the current drag refused by PathGuard
 
     public event Action<ActionDef, string[]>? ActionChosen;
 
@@ -235,14 +236,15 @@ public sealed class RadialWindow : Window
     }
 
     private string IdleText() =>
-        _files.Length == 0 ? "…"
+        _blocked > 0 && _files.Length == 0 ? "ممنوع (خارج C:)"
+        : _files.Length == 0 ? "…"
         : _wedges.Count == 0 ? "غير مدعوم"
         : _mode == WheelMode.Convert ? "تحويل" : "أدوات";
 
     /// <summary>Rebuild the wedges if the mode or the dragged files changed.</summary>
     private void RefreshItems()
     {
-        string sig = _mode + "|" + string.Join("|", _files);
+        string sig = _mode + "|" + _blocked + "|" + string.Join("|", _files);
         if (sig == _signature) return;
         _signature = sig;
 
@@ -260,12 +262,17 @@ public sealed class RadialWindow : Window
         el.Drop += OnDrop;
     }
 
-    private static string[] ReadFiles(DragEventArgs e)
+    /// <summary>Reads the dragged paths. If any of them is outside the allowed drives, the whole drag is refused.</summary>
+    private string[] ReadFiles(DragEventArgs e)
     {
         try
         {
             if (e.Data.GetDataPresent(DataFormats.FileDrop) && e.Data.GetData(DataFormats.FileDrop) is string[] arr)
-                return arr;
+            {
+                string[] ok = PathGuard.FilterAll(arr, out int blocked);
+                _blocked = blocked;
+                return ok;
+            }
         }
         catch { /* ignore */ }
         return Array.Empty<string>();
@@ -355,6 +362,7 @@ public sealed class RadialWindow : Window
 
         _mode = mode;
         _files = Array.Empty<string>();
+        _blocked = 0;
         _signature = null;
         Rebuild(Array.Empty<ActionDef>());
         SetHubText("…");
