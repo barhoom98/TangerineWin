@@ -17,7 +17,7 @@
 
 | نوع الملف | Shift (تحويل) | Ctrl (أدوات) |
 |---|---|---|
-| صورة | PNG, JPG, BMP, TIFF, GIF, PDF | ضغط (تصغير الحجم), Metadata (حذف بيانات EXIF/GPS), ZIP |
+| صورة | PNG, JPG, BMP, TIFF, GIF, PDF | ضغط (تصغير الحجم), **قص** (Crop), Metadata (حذف بيانات EXIF/GPS), ZIP |
 | PDF | Word, صور PNG | ضغط PDF*, ZIP |
 | Word / Excel / PowerPoint | PDF | ZIP |
 | أي ملف أو مجلد ثاني | (ما في) | ZIP |
@@ -28,8 +28,11 @@
 
 \* ضغط PDF الحقيقي بيحتاج Ghostscript منزّل.
 
+### القص (Crop)
+اسحب صورة، اضغط **Ctrl**، وأفلتها على **قص**. بتفتح نافذة: حرّك المستطيل، أو اسحب المقابض لتغيير الحجم، أو ارسم مستطيل جديد على الصورة. اختار نسبة (1:1، 4:3، 16:9...) أو خليها حرة، ثم **حفظ** (أو Enter). بيتحفظ `اسم_crop` جنب الأصلية، وEsc للإلغاء.
+
 ### اللي لسا مش موجود
-WEBP وAVIF وHEIC كصيغ ناتجة، وأدوات Crop وAnnotate وEdit وRedact وAdd BG. وكمان شاشة إعدادات لتغيير المفاتيح.
+WEBP وAVIF وHEIC كصيغ ناتجة، وأدوات Annotate وEdit وRedact وAdd BG. وكمان شاشة إعدادات لتغيير المفاتيح.
 
 ## ⚠️ ويندوز بيحظر البرنامج (Smart App Control / SmartScreen)
 

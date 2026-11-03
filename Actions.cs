@@ -18,13 +18,17 @@ public sealed class ActionDef
     public Func<string, bool> Supports { get; }
     public Func<IReadOnlyList<string>, Task<ActionResult>> Run { get; }
 
+    /// <summary>True when the action opens its own window (no "working..." notification needed).</summary>
+    public bool Interactive { get; }
+
     public ActionDef(string icon, string label, Func<string, bool> supports,
-                     Func<IReadOnlyList<string>, Task<ActionResult>> run)
+                     Func<IReadOnlyList<string>, Task<ActionResult>> run, bool interactive = false)
     {
         Icon = icon;
         Label = label;
         Supports = supports;
         Run = run;
+        Interactive = interactive;
     }
 }
 
@@ -66,6 +70,7 @@ public static class ActionCatalog
     {
         new("📉", "ضغط", FileKinds.IsImage,
             files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.Shrink(p)))),
+        new("✂️", "قص", FileKinds.IsImage, CropImage, interactive: true),
         new("🏷️", "Metadata", FileKinds.IsImage,
             files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.StripMetadata(p)))),
         Zip,
@@ -141,6 +146,22 @@ public static class ActionCatalog
         if (skipped > 0) msg += $" (تخطّيت {skipped} نوع غير مدعوم)";
         if (errors.Count > 0) msg += "\n" + string.Join("\n", errors.Take(3));
         return new ActionResult(msg, last);
+    }
+
+    /// <summary>Opens the crop editor for the first image. Must run on the UI thread (the drop handler does).</summary>
+    private static Task<ActionResult> CropImage(IReadOnlyList<string> files)
+    {
+        string? src = files.FirstOrDefault(FileKinds.IsImage);
+        if (src == null) return Task.FromResult(new ActionResult("ما في صورة", null));
+
+        var tcs = new TaskCompletionSource<ActionResult>();
+        var win = new CropWindow(src);
+        win.Finished += r => tcs.TrySetResult(r);
+        win.Topmost = true;
+        win.Show();
+        win.Activate();
+        win.Topmost = false;
+        return tcs.Task;
     }
 
     private static async Task<ActionResult> CompressPdfs(IReadOnlyList<string> files)

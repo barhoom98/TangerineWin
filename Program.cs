@@ -130,7 +130,9 @@ internal sealed class Controller : IDisposable
 
     private async void OnActionChosen(ActionDef action, string[] files)
     {
-        Notify("🍊 " + action.Label, "جاري المعالجة…", null);
+        // let the drag-and-drop finish before we open any window or start heavy work
+        await Task.Delay(80);
+        if (!action.Interactive) Notify("🍊 " + action.Label, "جاري المعالجة…", null);
         try
         {
             ActionResult r = await action.Run(files);

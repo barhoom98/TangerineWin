@@ -135,7 +135,7 @@ internal static class ImageOps
     }
 
     /// <summary>Decodes the image and applies the EXIF orientation so phone photos don't come out sideways.</summary>
-    private static BitmapSource Load(string path)
+    internal static BitmapSource Load(string path)
     {
         var bi = new BitmapImage();
         bi.BeginInit();
@@ -207,6 +207,28 @@ internal static class ImageOps
         string dst = Paths.Unique(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src), ext);
         Save(bmp, enc, dst);
         return dst;
+    }
+
+    /// <summary>Saves the selected region next to the original as "name_crop" (same format for PNG/JPG, otherwise PNG).</summary>
+    public static string SaveCropped(string src, BitmapSource full, Int32Rect rect)
+    {
+        var cropped = new CroppedBitmap(full, rect);
+        cropped.Freeze();
+
+        string name = Path.GetFileNameWithoutExtension(src) + "_crop";
+        string dir = Path.GetDirectoryName(src)!;
+        if (FileKinds.IsJpeg(src))
+        {
+            string dst = Paths.Unique(dir, name, ".jpg");
+            Save(cropped, new JpegBitmapEncoder { QualityLevel = 92 }, dst);
+            return dst;
+        }
+        else
+        {
+            string dst = Paths.Unique(dir, name, ".png");
+            Save(cropped, new PngBitmapEncoder(), dst);
+            return dst;
+        }
     }
 
     /// <summary>Re-renders the pixels into a fresh bitmap, which drops EXIF/GPS/camera metadata.</summary>
