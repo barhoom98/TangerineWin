@@ -99,6 +99,10 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 - `Actions.cs`: تعريف الخيارات لكل نوع ملف ولكل وضع (Shift أو Ctrl). لإضافة خيار جديد أضف `ActionDef` للقائمة المناسبة.
 - `Converters.cs`: التحويلات (WPF imaging، PDFsharp، Office COM، LibreOffice، Ghostscript، ZIP).
 
+## تشخيص المشاكل
+
+البرنامج بيكتب أي خطأ غير متوقع بملف: `%LOCALAPPDATA%\TangerineWin\log.txt` (افتحه بكتابة هالمسار في شريط عنوان Explorer). فيه سطر `started` كل ما اشتغل، وسطر `exited normally` لو طلعت منه بنفسك. أما لو اختفت الأيقونة بدون سطر `exited normally`، فالبرنامج وقع وأسبابه مكتوبة بالملف.
+
 ## قيود معروفة
 
 - ما بيشتغل فوق نوافذ Explorer المرفوعة بصلاحيات Administrator.

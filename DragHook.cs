@@ -48,6 +48,16 @@ internal sealed class DragHook : IDisposable
 
     private IntPtr KeyboardCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
+        try { return KeyboardCore(nCode, wParam, lParam); }
+        catch (Exception ex)
+        {
+            Log.Write("keyboard hook: " + ex);
+            return Native.CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+    }
+
+    private IntPtr KeyboardCore(int nCode, IntPtr wParam, IntPtr lParam)
+    {
         if (nCode >= 0 && Enabled)
         {
             int msg = wParam.ToInt32();
@@ -79,6 +89,16 @@ internal sealed class DragHook : IDisposable
     }
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        try { return HookCore(nCode, wParam, lParam); }
+        catch (Exception ex)
+        {
+            Log.Write("mouse hook: " + ex);
+            return Native.CallNextHookEx(_hook, nCode, wParam, lParam);
+        }
+    }
+
+    private IntPtr HookCore(int nCode, IntPtr wParam, IntPtr lParam)
     {
         if (nCode >= 0 && Enabled)
         {

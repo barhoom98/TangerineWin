@@ -19,9 +19,53 @@ internal static class Program
         using var mutex = new Mutex(true, "TangerineWin.SingleInstance", out bool created);
         if (!created) return;
 
+        // never die silently: write every unexpected error to %LOCALAPPDATA%\TangerineWin\log.txt
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Write("UNHANDLED: " + e.ExceptionObject);
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            Log.Write("TASK: " + e.Exception);
+            e.SetObserved();
+        };
+
         var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-        using var controller = new Controller(app);
-        app.Run();
+        app.DispatcherUnhandledException += (_, e) =>
+        {
+            Log.Write("UI: " + e.Exception);
+            e.Handled = true; // keep running
+        };
+
+        try
+        {
+            using var controller = new Controller(app);
+            Log.Write("started");
+            app.Run();
+            Log.Write("exited normally (Exit from the tray menu)");
+        }
+        catch (Exception ex)
+        {
+            Log.Write("FATAL: " + ex);
+            System.Windows.MessageBox.Show(
+                "TangerineWin توقف بسبب خطأ:\n" + ex.Message + "\n\nالتفاصيل في: " + Log.FilePath,
+                "TangerineWin");
+        }
+    }
+}
+
+internal static class Log
+{
+    private static readonly string Dir =
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TangerineWin");
+
+    public static string FilePath => Path.Combine(Dir, "log.txt");
+
+    public static void Write(string message)
+    {
+        try
+        {
+            Directory.CreateDirectory(Dir);
+            File.AppendAllText(FilePath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+        }
+        catch { /* logging must never throw */ }
     }
 }
 
@@ -181,7 +225,7 @@ internal sealed class Controller : IDisposable
         var icon = new Forms.NotifyIcon
         {
             Icon = CreateIcon(),
-            Text = "Tangerine – اسحب ملف ثم اضغط Shift أو Ctrl",
+            Text = "Tangerine – اسحب ملف ثم Shift أو Ctrl",
             Visible = true,
             ContextMenuStrip = menu,
         };
