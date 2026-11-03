@@ -44,7 +44,17 @@ internal static class FileKinds
     }
     public static bool IsPng(string p) => Path.GetExtension(p).Equals(".png", StringComparison.OrdinalIgnoreCase);
     public static bool Exists(string p) => File.Exists(p) || Directory.Exists(p);
+
+    public static FileKind KindOf(string p) =>
+        IsImage(p) ? FileKind.Image :
+        IsPdf(p) ? FileKind.Pdf :
+        IsOffice(p) ? FileKind.Office :
+        FileKind.Other;
 }
+
+internal enum FileKind { Image, Pdf, Office, Other }
+
+internal enum ImgFmt { Png, Jpg, Bmp, Tiff, Gif }
 
 internal static class Paths
 {
@@ -111,6 +121,20 @@ internal static class Paths
 /// <summary>Image conversion / resizing using WPF imaging (WIC).</summary>
 internal static class ImageOps
 {
+    private static int ReadOrientation(string path)
+    {
+        try
+        {
+            BitmapFrame f = BitmapFrame.Create(new Uri(path), BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            if (f.Metadata is BitmapMetadata m && m.ContainsQuery("System.Photo.Orientation")
+                && m.GetQuery("System.Photo.Orientation") is ushort o)
+                return o;
+        }
+        catch { /* no metadata */ }
+        return 1;
+    }
+
+    /// <summary>Decodes the image and applies the EXIF orientation so phone photos don't come out sideways.</summary>
     private static BitmapSource Load(string path)
     {
         var bi = new BitmapImage();
@@ -119,7 +143,13 @@ internal static class ImageOps
         bi.UriSource = new Uri(path);
         bi.EndInit();
         bi.Freeze();
-        return bi;
+
+        double angle = ReadOrientation(path) switch { 3 => 180, 6 => 90, 8 => 270, _ => 0 };
+        if (angle == 0) return bi;
+
+        var tb = new TransformedBitmap(bi, new RotateTransform(angle));
+        tb.Freeze();
+        return tb;
     }
 
     private static BitmapSource Render(BitmapSource src, int w, int h, bool whiteBackground)
@@ -144,21 +174,61 @@ internal static class ImageOps
         enc.Save(fs);
     }
 
-    public static string ToPng(string src)
+    public static bool IsFormat(string p, ImgFmt f)
+    {
+        string e = Path.GetExtension(p).ToLowerInvariant();
+        return f switch
+        {
+            ImgFmt.Png => e == ".png",
+            ImgFmt.Jpg => e == ".jpg" || e == ".jpeg",
+            ImgFmt.Bmp => e == ".bmp",
+            ImgFmt.Tiff => e == ".tif" || e == ".tiff",
+            ImgFmt.Gif => e == ".gif",
+            _ => false,
+        };
+    }
+
+    public static string Convert(string src, ImgFmt fmt)
     {
         BitmapSource bmp = Load(src);
-        string dst = Paths.Unique(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src), ".png");
-        Save(bmp, new PngBitmapEncoder(), dst);
+        BitmapEncoder enc;
+        string ext;
+        bool flatten = false; // formats without good alpha support get a white background
+        switch (fmt)
+        {
+            case ImgFmt.Png: enc = new PngBitmapEncoder(); ext = ".png"; break;
+            case ImgFmt.Jpg: enc = new JpegBitmapEncoder { QualityLevel = 90 }; ext = ".jpg"; flatten = true; break;
+            case ImgFmt.Bmp: enc = new BmpBitmapEncoder(); ext = ".bmp"; flatten = true; break;
+            case ImgFmt.Tiff: enc = new TiffBitmapEncoder { Compression = TiffCompressOption.Zip }; ext = ".tif"; break;
+            default: enc = new GifBitmapEncoder(); ext = ".gif"; flatten = true; break;
+        }
+        if (flatten) bmp = Render(bmp, bmp.PixelWidth, bmp.PixelHeight, true);
+
+        string dst = Paths.Unique(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src), ext);
+        Save(bmp, enc, dst);
         return dst;
     }
 
-    public static string ToJpg(string src)
+    /// <summary>Re-renders the pixels into a fresh bitmap, which drops EXIF/GPS/camera metadata.</summary>
+    public static string StripMetadata(string src)
     {
         BitmapSource bmp = Load(src);
-        BitmapSource flat = Render(bmp, bmp.PixelWidth, bmp.PixelHeight, true); // flatten transparency on white
-        string dst = Paths.Unique(Path.GetDirectoryName(src)!, Path.GetFileNameWithoutExtension(src), ".jpg");
-        Save(flat, new JpegBitmapEncoder { QualityLevel = 90 }, dst);
-        return dst;
+        bool jpeg = FileKinds.IsJpeg(src);
+        BitmapSource clean = Render(bmp, bmp.PixelWidth, bmp.PixelHeight, jpeg);
+        string name = Path.GetFileNameWithoutExtension(src) + "_clean";
+        string dir = Path.GetDirectoryName(src)!;
+        if (jpeg)
+        {
+            string dst = Paths.Unique(dir, name, ".jpg");
+            Save(clean, new JpegBitmapEncoder { QualityLevel = 92 }, dst);
+            return dst;
+        }
+        else
+        {
+            string dst = Paths.Unique(dir, name, ".png");
+            Save(clean, new PngBitmapEncoder(), dst);
+            return dst;
+        }
     }
 
     /// <summary>Downscale so the longest side is at most 1920px and recompress (JPEG q72 / PNG).</summary>

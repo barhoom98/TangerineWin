@@ -7,27 +7,33 @@ using System.Windows.Documents;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Media.Effects;
 using System.Windows.Shapes;
 using WpfPath = System.Windows.Shapes.Path;
 
 namespace TangerineWin;
 
 /// <summary>
-/// The radial overlay shown while a file is dragged with Shift held.
-/// Each wedge is an OLE drop target; dropping the file on a wedge runs that action.
+/// The radial overlay shown while a file is being dragged. Each wedge is an OLE drop target;
+/// dropping the file on a wedge runs that action. The wedges depend on the dragged file type
+/// and on the wheel mode (Shift = convert, Ctrl = tools).
 /// </summary>
 public sealed class RadialWindow : Window
 {
-    private const double Size = 360;
-    private const double R1 = 66;   // inner radius
-    private const double R2 = 164;  // outer radius
-    private const double GapRad = 0.035;
+    private const double Size = 380;
+    private const double R1 = 64;      // inner radius of the wedges
+    private const double R2 = 156;     // outer radius of the wedges
+    private const double DiscR = 174;  // radius of the soft background disc
+    private const double Inset = 4;    // wedges are drawn inset + a round-joined stroke = rounded corners
+    private const double PadAngle = 6.5 / ((R1 + R2) / 2);
 
-    private static readonly Brush NormalFill = Frozen(new SolidColorBrush(Color.FromArgb(0xE8, 0x23, 0x23, 0x28)));
-    private static readonly Brush AccentFill = Frozen(new SolidColorBrush(Color.FromRgb(0xFF, 0x8A, 0x1F)));
-    private static readonly Brush HubFill = Frozen(new SolidColorBrush(Color.FromArgb(0xC0, 0x11, 0x11, 0x14)));
-    private static readonly Brush EdgeStroke = Frozen(new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF)));
-    private static readonly Brush TextBrush = Frozen(new SolidColorBrush(Colors.White));
+    private static readonly Brush DiscFill = Frozen(new SolidColorBrush(Color.FromArgb(0xF2, 0xEC, 0xEF, 0xF1)));
+    private static readonly Brush NormalFill = Frozen(new SolidColorBrush(Color.FromRgb(0xF8, 0xF9, 0xF9)));
+    private static readonly Brush AccentFill = Frozen(new SolidColorBrush(Color.FromRgb(0xFF, 0x55, 0x00)));
+    private static readonly Brush HubFill = Frozen(new SolidColorBrush(Color.FromArgb(0xF5, 0xFF, 0xFF, 0xFF)));
+    private static readonly Brush PillBorder = Frozen(new SolidColorBrush(Color.FromRgb(0xD9, 0xDC, 0xDE)));
+    private static readonly Brush DarkText = Frozen(new SolidColorBrush(Color.FromRgb(0x1D, 0x1D, 0x1F)));
+    private static readonly Brush LightText = Frozen(new SolidColorBrush(Colors.White));
 
     private sealed class Wedge
     {
@@ -36,15 +42,21 @@ public sealed class RadialWindow : Window
         public TextBlock Text = null!;
     }
 
+    private readonly Canvas _canvas;
+    private readonly List<UIElement> _dynamic = new();
     private readonly List<Wedge> _wedges = new();
-    private readonly Run _hubLabel = new("اسحب هنا");
+    private readonly Border _pill;
+    private readonly TextBlock _pillText;
     private readonly ScaleTransform _scale = new(1, 1);
+
+    private WheelMode _mode = WheelMode.Convert;
     private string[] _files = Array.Empty<string>();
+    private string? _signature;
     private ActionDef? _hover;
 
     public event Action<ActionDef, string[]>? ActionChosen;
 
-    public RadialWindow(IReadOnlyList<ActionDef> actions)
+    public RadialWindow()
     {
         Width = Size;
         Height = Size;
@@ -58,85 +70,68 @@ public sealed class RadialWindow : Window
         Focusable = false;
         WindowStartupLocation = WindowStartupLocation.Manual;
 
-        var canvas = new Canvas
+        _canvas = new Canvas
         {
             Width = Size,
             Height = Size,
             RenderTransformOrigin = new Point(0.5, 0.5),
             RenderTransform = _scale,
         };
-        Content = canvas;
+        Content = _canvas;
 
-        double cx = Size / 2, cy = Size / 2;
-        int n = actions.Count;
-        double step = 2 * Math.PI / n;
+        double c = Size / 2;
 
-        for (int i = 0; i < n; i++)
+        // soft background disc with a shadow (not a drop target)
+        var disc = new Ellipse
         {
-            // wedge i is centered at angle (-90° + i*step), clockwise from the top
-            double mid = -Math.PI / 2 + i * step;
-            double a0 = mid - step / 2 + GapRad;
-            double a1 = mid + step / 2 - GapRad;
+            Width = DiscR * 2,
+            Height = DiscR * 2,
+            Fill = DiscFill,
+            IsHitTestVisible = false,
+            Effect = new DropShadowEffect { BlurRadius = 18, ShadowDepth = 3, Direction = 270, Opacity = 0.28 },
+        };
+        Canvas.SetLeft(disc, c - DiscR);
+        Canvas.SetTop(disc, c - DiscR);
+        _canvas.Children.Add(disc);
 
-            var shape = new WpfPath
-            {
-                Data = Sector(cx, cy, R1, R2, a0, a1),
-                Fill = NormalFill,
-                Stroke = EdgeStroke,
-                StrokeThickness = 1,
-                AllowDrop = true,
-                Tag = actions[i],
-            };
-            AttachDropHandlers(shape);
-            canvas.Children.Add(shape);
-
-            var tb = new TextBlock
-            {
-                Foreground = TextBrush,
-                TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
-                IsHitTestVisible = false,
-                FlowDirection = FlowDirection.RightToLeft,
-                Width = 78,
-            };
-            tb.Inlines.Add(new Run(actions[i].Icon) { FontSize = 22, FontFamily = new FontFamily("Segoe UI Emoji") });
-            tb.Inlines.Add(new LineBreak());
-            tb.Inlines.Add(new Run(actions[i].Label) { FontSize = 11, FontFamily = new FontFamily("Segoe UI") });
-            PlaceCentered(canvas, tb, cx + Math.Cos(mid) * (R1 + R2) / 2, cy + Math.Sin(mid) * (R1 + R2) / 2, 78);
-
-            _wedges.Add(new Wedge { Action = actions[i], Shape = shape, Text = tb });
-        }
-
-        // center hub: also a drop target so we can read the dragged files as soon as the cursor is over it
+        // center hub: the first thing the cursor is over, so it receives the first DragEnter (and the file list)
         double hubR = R1 - 8;
-        var hub = new System.Windows.Shapes.Ellipse
+        var hub = new Ellipse
         {
             Width = hubR * 2,
             Height = hubR * 2,
             Fill = HubFill,
-            Stroke = EdgeStroke,
-            StrokeThickness = 1,
             AllowDrop = true,
             Tag = null,
         };
-        Canvas.SetLeft(hub, cx - hubR);
-        Canvas.SetTop(hub, cy - hubR);
+        Canvas.SetLeft(hub, c - hubR);
+        Canvas.SetTop(hub, c - hubR);
         AttachDropHandlers(hub);
-        canvas.Children.Add(hub);
+        _canvas.Children.Add(hub);
 
-        var hubText = new TextBlock
+        // the white pill in the middle that shows the hovered action
+        _pillText = new TextBlock
         {
-            Foreground = TextBrush,
-            TextAlignment = TextAlignment.Center,
-            IsHitTestVisible = false,
+            FontFamily = new FontFamily("Segoe UI"),
+            FontWeight = FontWeights.SemiBold,
+            FontSize = 13,
+            Foreground = DarkText,
             FlowDirection = FlowDirection.RightToLeft,
+            TextAlignment = TextAlignment.Center,
         };
-        hubText.Inlines.Add(new Run("🍊") { FontSize = 26, FontFamily = new FontFamily("Segoe UI Emoji") });
-        hubText.Inlines.Add(new LineBreak());
-        _hubLabel.FontSize = 11;
-        _hubLabel.FontFamily = new FontFamily("Segoe UI");
-        hubText.Inlines.Add(_hubLabel);
-        PlaceCentered(canvas, hubText, cx, cy, hubR * 2 - 8);
+        _pill = new Border
+        {
+            Background = Brushes.White,
+            BorderBrush = PillBorder,
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(12, 5, 12, 5),
+            MinWidth = 54,
+            IsHitTestVisible = false,
+            Child = _pillText,
+        };
+        _canvas.Children.Add(_pill);
+        SetHubText("…");
     }
 
     private static T Frozen<T>(T f) where T : Freezable
@@ -145,13 +140,77 @@ public sealed class RadialWindow : Window
         return f;
     }
 
-    private static void PlaceCentered(Canvas canvas, TextBlock tb, double x, double y, double width)
+    // ---- building the wedges ----------------------------------------------------------------
+
+    private void AddDynamic(UIElement el)
     {
-        tb.Width = width;
-        tb.Measure(new Size(width, double.PositiveInfinity));
-        Canvas.SetLeft(tb, x - width / 2);
-        Canvas.SetTop(tb, y - tb.DesiredSize.Height / 2);
-        canvas.Children.Add(tb);
+        _canvas.Children.Insert(1 + _dynamic.Count, el); // above the disc, below the hub and the pill
+        _dynamic.Add(el);
+    }
+
+    private void Rebuild(IReadOnlyList<ActionDef> items)
+    {
+        foreach (UIElement e in _dynamic) _canvas.Children.Remove(e);
+        _dynamic.Clear();
+        _wedges.Clear();
+        _hover = null;
+
+        int n = items.Count;
+        if (n == 0) return;
+
+        double c = Size / 2;
+        double step = 2 * Math.PI / Math.Max(n, 4);
+
+        for (int i = 0; i < n; i++)
+        {
+            // symmetric around the top, clockwise
+            double mid = -Math.PI / 2 + (i - (n - 1) / 2.0) * step;
+            double a0 = mid - step / 2 + PadAngle;
+            double a1 = mid + step / 2 - PadAngle;
+
+            var shape = new WpfPath
+            {
+                Data = Sector(c, c, R1 + Inset, R2 - Inset, a0, a1),
+                Fill = NormalFill,
+                Stroke = NormalFill,
+                StrokeThickness = Inset * 2,
+                StrokeLineJoin = PenLineJoin.Round,
+                AllowDrop = true,
+                Tag = items[i],
+            };
+            AttachDropHandlers(shape);
+            AddDynamic(shape);
+
+            bool hasIcon = items[i].Icon.Length > 0;
+            var tb = new TextBlock
+            {
+                Foreground = DarkText,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                IsHitTestVisible = false,
+                FlowDirection = FlowDirection.RightToLeft,
+                FontFamily = new FontFamily("Segoe UI"),
+                Width = 76,
+            };
+            if (hasIcon)
+            {
+                tb.Inlines.Add(new Run(items[i].Icon) { FontSize = 20, FontFamily = new FontFamily("Segoe UI Emoji") });
+                tb.Inlines.Add(new LineBreak());
+                tb.Inlines.Add(new Run(items[i].Label) { FontSize = 11.5, FontWeight = FontWeights.SemiBold });
+            }
+            else
+            {
+                tb.Inlines.Add(new Run(items[i].Label) { FontSize = 15, FontWeight = FontWeights.Bold });
+            }
+
+            double r = (R1 + R2) / 2;
+            tb.Measure(new Size(76, double.PositiveInfinity));
+            Canvas.SetLeft(tb, c + Math.Cos(mid) * r - 38);
+            Canvas.SetTop(tb, c + Math.Sin(mid) * r - tb.DesiredSize.Height / 2);
+            AddDynamic(tb);
+
+            _wedges.Add(new Wedge { Action = items[i], Shape = shape, Text = tb });
+        }
     }
 
     private static Geometry Sector(double cx, double cy, double r1, double r2, double a0, double a1)
@@ -164,6 +223,31 @@ public sealed class RadialWindow : Window
         var g = new PathGeometry(new[] { fig });
         g.Freeze();
         return g;
+    }
+
+    private void SetHubText(string text)
+    {
+        _pillText.Text = text;
+        _pill.Measure(new Size(Size, Size));
+        double c = Size / 2;
+        Canvas.SetLeft(_pill, c - _pill.DesiredSize.Width / 2);
+        Canvas.SetTop(_pill, c - _pill.DesiredSize.Height / 2);
+    }
+
+    private string IdleText() =>
+        _files.Length == 0 ? "…"
+        : _wedges.Count == 0 ? "غير مدعوم"
+        : _mode == WheelMode.Convert ? "تحويل" : "أدوات";
+
+    /// <summary>Rebuild the wedges if the mode or the dragged files changed.</summary>
+    private void RefreshItems()
+    {
+        string sig = _mode + "|" + string.Join("|", _files);
+        if (sig == _signature) return;
+        _signature = sig;
+
+        Rebuild(ActionCatalog.For(_mode, _files));
+        SetHubText(IdleText());
     }
 
     // ---- drag & drop ------------------------------------------------------------------------
@@ -187,17 +271,18 @@ public sealed class RadialWindow : Window
         return Array.Empty<string>();
     }
 
-    private bool IsSupported(ActionDef? a) =>
-        a != null && (_files.Length == 0 || _files.Any(a.Supports));
+    private bool IsSupported(ActionDef? a) => a != null && _files.Any(a.Supports);
 
-    // Always answer "Copy" so the source (Explorer) never treats the drop as a Move and deletes the original
-    // (Shift+drag normally means Move).
+    // Always answer "Copy" so the source (Explorer) never treats the drop as a Move and deletes the original.
     private DragDropEffects EffectFor(ActionDef? a) =>
         IsSupported(a) ? DragDropEffects.Copy : DragDropEffects.None;
 
     private void OnDragEnter(object sender, DragEventArgs e)
     {
-        _files = ReadFiles(e);
+        string[] files = ReadFiles(e);
+        if (files.Length > 0) _files = files;
+        RefreshItems();
+
         var a = (sender as FrameworkElement)?.Tag as ActionDef;
         SetHover(a);
         e.Effects = EffectFor(a);
@@ -239,12 +324,12 @@ public sealed class RadialWindow : Window
         _hover = a;
         foreach (Wedge w in _wedges)
         {
-            bool supported = IsSupported(w.Action) || _files.Length == 0;
-            bool hovered = ReferenceEquals(w.Action, a);
-            w.Shape.Fill = hovered && supported ? AccentFill : NormalFill;
-            w.Text.Opacity = supported ? 1.0 : 0.3;
+            bool on = ReferenceEquals(w.Action, a) && IsSupported(w.Action);
+            w.Shape.Fill = on ? AccentFill : NormalFill;
+            w.Shape.Stroke = on ? AccentFill : NormalFill;
+            w.Text.Foreground = on ? LightText : DarkText;
         }
-        _hubLabel.Text = a == null ? "اسحب هنا" : a.Label;
+        SetHubText(a?.Label ?? IdleText());
     }
 
     // ---- show / hide ------------------------------------------------------------------------
@@ -257,18 +342,26 @@ public sealed class RadialWindow : Window
         Native.SetWindowLong(hwnd, Native.GWL_EXSTYLE, ex | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW);
     }
 
-    /// <summary>Show the ring centered on the given physical screen pixel.</summary>
-    public void ShowAt(int px, int py)
+    /// <summary>Show the wheel centered on the given physical screen pixel, or just switch its mode if already open.</summary>
+    public void ShowOrSwitch(int px, int py, WheelMode mode)
     {
-        _files = Array.Empty<string>();
-        SetHover(null);
-
-        if (!IsVisible)
+        if (IsVisible)
         {
-            Left = -10000;
-            Top = -10000;
-            Show();
+            if (mode == _mode) return;
+            _mode = mode;
+            RefreshItems();
+            return;
         }
+
+        _mode = mode;
+        _files = Array.Empty<string>();
+        _signature = null;
+        Rebuild(Array.Empty<ActionDef>());
+        SetHubText("…");
+
+        Left = -10000;
+        Top = -10000;
+        Show();
 
         double dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
         int size = (int)Math.Round(Size * dpi);

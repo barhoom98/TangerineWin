@@ -37,16 +37,18 @@ internal sealed class Controller : IDisposable
     private string? _pendingSelectPath;
     private int _session;
     private bool _dragging;
+    private bool _fileDrag;   // UI Automation confirmed the drag started on a file/folder item
 
     public Controller(System.Windows.Application app)
     {
         _app = app;
-        _ring = new RadialWindow(ActionCatalog.All);
+        _ring = new RadialWindow();
         _ring.ActionChosen += OnActionChosen;
 
         _hook = new DragHook();
         _hook.DragStarted += OnDragStarted;
         _hook.ButtonReleased += OnButtonReleased;
+        _hook.ModeKey += OnModeKey;
 
         _tray = BuildTray();
     }
@@ -57,6 +59,7 @@ internal sealed class Controller : IDisposable
     {
         int session = ++_session;
         _dragging = true;
+        _fileDrag = false;
 
         // UI Automation is a cross-process call: do it off the hook thread.
         Task.Run(() => IsFileItemAt(startX, startY)).ContinueWith(t =>
@@ -64,15 +67,36 @@ internal sealed class Controller : IDisposable
             if (!t.Result) return;
             _app.Dispatcher.BeginInvoke(() =>
             {
-                if (session == _session && _dragging)
-                    _ring.ShowAt(_hook.LastX, _hook.LastY);
+                if (session != _session || !_dragging) return;
+                _fileDrag = true;
+
+                // the user may already be holding Shift / Ctrl
+                WheelMode? held = HeldMode();
+                if (held != null) _ring.ShowOrSwitch(_hook.LastX, _hook.LastY, held.Value);
             });
         });
+    }
+
+    /// <summary>The user tapped Shift (convert) or Ctrl (tools) during a drag.</summary>
+    private void OnModeKey(WheelMode mode)
+    {
+        _app.Dispatcher.BeginInvoke(() =>
+        {
+            if (_dragging && _fileDrag) _ring.ShowOrSwitch(_hook.LastX, _hook.LastY, mode);
+        });
+    }
+
+    private static WheelMode? HeldMode()
+    {
+        if ((Native.GetAsyncKeyState(Native.VK_SHIFT) & 0x8000) != 0) return WheelMode.Convert;
+        if ((Native.GetAsyncKeyState(Native.VK_CONTROL) & 0x8000) != 0) return WheelMode.Tools;
+        return null;
     }
 
     private void OnButtonReleased()
     {
         _dragging = false;
+        _fileDrag = false;
         int session = _session;
         // Give the OLE Drop event time to arrive before we hide the ring.
         _app.Dispatcher.BeginInvoke(async () =>
@@ -147,7 +171,7 @@ internal sealed class Controller : IDisposable
         var icon = new Forms.NotifyIcon
         {
             Icon = CreateIcon(),
-            Text = "Tangerine – Shift + اسحب ملف",
+            Text = "Tangerine – اسحب ملف ثم اضغط Shift أو Ctrl",
             Visible = true,
             ContextMenuStrip = menu,
         };

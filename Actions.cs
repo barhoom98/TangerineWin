@@ -7,8 +7,12 @@ namespace TangerineWin;
 
 public sealed record ActionResult(string Message, string? Path);
 
+/// <summary>Convert = Shift wheel (change format). Tools = Ctrl wheel (compress, clean, zip...).</summary>
+public enum WheelMode { Convert, Tools }
+
 public sealed class ActionDef
 {
+    /// <summary>Optional emoji shown above the label. Empty for plain-text wedges (format names).</summary>
     public string Icon { get; }
     public string Label { get; }
     public Func<string, bool> Supports { get; }
@@ -26,47 +30,94 @@ public sealed class ActionDef
 
 public static class ActionCatalog
 {
-    /// <summary>Wedges, clockwise starting from the top.</summary>
-    public static IReadOnlyList<ActionDef> All { get; } = new List<ActionDef>
+    // ---- convert wheel (Shift) --------------------------------------------------------------
+
+    private static readonly ActionDef[] ImageConvert =
     {
-        new("🖼️", "إلى PNG",
-            p => FileKinds.IsImage(p) && !FileKinds.IsPng(p),
-            files => PerFile(files, p => FileKinds.IsImage(p) && !FileKinds.IsPng(p), p => Task.FromResult(ImageOps.ToPng(p)))),
-
-        new("📷", "إلى JPG",
-            p => FileKinds.IsImage(p) && !FileKinds.IsJpeg(p),
-            files => PerFile(files, p => FileKinds.IsImage(p) && !FileKinds.IsJpeg(p), p => Task.FromResult(ImageOps.ToJpg(p)))),
-
-        new("📉", "تصغير الصورة",
-            FileKinds.IsImage,
-            files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.Shrink(p)))),
-
-        new("📄", "صورة إلى PDF",
-            FileKinds.IsImage,
+        ImgConvert(ImgFmt.Png, "PNG"),
+        ImgConvert(ImgFmt.Jpg, "JPG"),
+        ImgConvert(ImgFmt.Bmp, "BMP"),
+        ImgConvert(ImgFmt.Tiff, "TIFF"),
+        ImgConvert(ImgFmt.Gif, "GIF"),
+        new("", "PDF", FileKinds.IsImage,
             files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.ToPdf(p)))),
-
-        new("📊", "Word / Excel إلى PDF",
-            FileKinds.IsOffice,
-            files => PerFile(files, FileKinds.IsOffice, OfficeOps.ToPdf, serial: true)),
-
-        new("📝", "PDF إلى Word",
-            FileKinds.IsPdf,
-            files => PerFile(files, FileKinds.IsPdf, OfficeOps.PdfToWord, serial: true)),
-
-        new("🖼", "PDF إلى صور",
-            FileKinds.IsPdf,
-            files => PerFile(files, FileKinds.IsPdf, PdfOps.ToImages)),
-
-        new("📦", "ضغط",
-            FileKinds.Exists,
-            Compress),
     };
+
+    private static readonly ActionDef[] PdfConvert =
+    {
+        new("", "Word", FileKinds.IsPdf,
+            files => PerFile(files, FileKinds.IsPdf, OfficeOps.PdfToWord)),
+        new("", "صور PNG", FileKinds.IsPdf,
+            files => PerFile(files, FileKinds.IsPdf, PdfOps.ToImages)),
+    };
+
+    private static readonly ActionDef[] OfficeConvert =
+    {
+        new("", "PDF", FileKinds.IsOffice,
+            files => PerFile(files, FileKinds.IsOffice, OfficeOps.ToPdf)),
+    };
+
+    // ---- tools wheel (Ctrl) -----------------------------------------------------------------
+
+    private static readonly ActionDef Zip =
+        new("📦", "ZIP", FileKinds.Exists, ZipAll);
+
+    private static readonly ActionDef[] ImageTools =
+    {
+        new("📉", "ضغط", FileKinds.IsImage,
+            files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.Shrink(p)))),
+        new("🏷️", "Metadata", FileKinds.IsImage,
+            files => PerFile(files, FileKinds.IsImage, p => Task.FromResult(ImageOps.StripMetadata(p)))),
+        Zip,
+    };
+
+    private static readonly ActionDef[] PdfTools =
+    {
+        new("📉", "ضغط PDF", FileKinds.IsPdf, CompressPdfs),
+        Zip,
+    };
+
+    private static readonly ActionDef[] OtherTools = { Zip };
+
+    /// <summary>The wedges to show for the dragged files (the first file decides the wheel).</summary>
+    public static IReadOnlyList<ActionDef> For(WheelMode mode, IReadOnlyList<string> files)
+    {
+        string? first = files.FirstOrDefault(FileKinds.Exists);
+        if (first == null) return Array.Empty<ActionDef>();
+
+        FileKind kind = FileKinds.KindOf(first);
+        IEnumerable<ActionDef> list = mode == WheelMode.Convert
+            ? kind switch
+            {
+                FileKind.Image => ImageConvert,
+                FileKind.Pdf => PdfConvert,
+                FileKind.Office => OfficeConvert,
+                _ => Array.Empty<ActionDef>(),
+            }
+            : kind switch
+            {
+                FileKind.Image => ImageTools,
+                FileKind.Pdf => PdfTools,
+                _ => OtherTools,
+            };
+
+        // hide wedges that make no sense for these files (e.g. "PNG" for a file that is already PNG)
+        return list.Where(a => files.Any(a.Supports)).ToList();
+    }
+
+    // ---- implementations --------------------------------------------------------------------
+
+    private static ActionDef ImgConvert(ImgFmt fmt, string label)
+    {
+        Func<string, bool> ok = p => FileKinds.IsImage(p) && !ImageOps.IsFormat(p, fmt);
+        return new ActionDef("", label, ok,
+            files => PerFile(files, ok, p => Task.FromResult(ImageOps.Convert(p, fmt))));
+    }
 
     private static async Task<ActionResult> PerFile(
         IReadOnlyList<string> files,
         Func<string, bool> accepts,
-        Func<string, Task<string>> work,
-        bool serial = false)
+        Func<string, Task<string>> work)
     {
         string? last = null;
         int ok = 0, skipped = 0;
@@ -92,31 +143,30 @@ public static class ActionCatalog
         return new ActionResult(msg, last);
     }
 
-    /// <summary>PDFs are shrunk with Ghostscript when installed; everything else is zipped.</summary>
-    private static async Task<ActionResult> Compress(IReadOnlyList<string> files)
+    private static async Task<ActionResult> CompressPdfs(IReadOnlyList<string> files)
+    {
+        string? gs = PdfOps.FindGhostscript();
+        if (gs == null)
+            return new ActionResult("ضغط PDF يحتاج Ghostscript منزّل. أو استعمل ZIP.", null);
+
+        string? last = null;
+        int ok = 0;
+        var errors = new List<string>();
+        foreach (string f in files.Where(FileKinds.IsPdf))
+        {
+            try { last = await PdfOps.Compress(gs, f); ok++; }
+            catch (Exception ex) { errors.Add(System.IO.Path.GetFileName(f) + ": " + ex.Message); }
+        }
+
+        string msg = ok > 0 ? $"تم ضغط {ok} ملف PDF" : "ما انضغط شي";
+        if (errors.Count > 0) msg += "\n" + string.Join("\n", errors.Take(3));
+        return new ActionResult(msg, last);
+    }
+
+    private static async Task<ActionResult> ZipAll(IReadOnlyList<string> files)
     {
         var items = files.Where(FileKinds.Exists).ToList();
         if (items.Count == 0) return new ActionResult("ما في ملفات", null);
-
-        if (items.All(FileKinds.IsPdf))
-        {
-            string? gs = PdfOps.FindGhostscript();
-            if (gs != null)
-            {
-                string? last = null;
-                int ok = 0;
-                var errors = new List<string>();
-                foreach (string f in items)
-                {
-                    try { last = await PdfOps.Compress(gs, f); ok++; }
-                    catch (Exception ex) { errors.Add(System.IO.Path.GetFileName(f) + ": " + ex.Message); }
-                }
-                string msg = ok > 0 ? $"تم ضغط {ok} ملف PDF" : "ما انضغط شي";
-                if (errors.Count > 0) msg += "\n" + string.Join("\n", errors.Take(3));
-                return new ActionResult(msg, last);
-            }
-            // no Ghostscript: fall through to zip
-        }
 
         string zip = await Task.Run(() => ZipOps.ZipItems(items));
         return new ActionResult("تم إنشاء " + System.IO.Path.GetFileName(zip), zip);
